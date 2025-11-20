@@ -2,15 +2,14 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import torch
 
 # --- Model Definition ---
-# Using NLLB-200 Distilled (600M) for high-quality, natural translations.
-# This single model handles both English (eng_Latn) and Urdu (urd_Arab).
+# Using NLLB-200 Distilled (600M)
 MODEL_NAME = "facebook/nllb-200-distilled-600M"
 
 _tokenizer = None
 _model = None
 
 def _load_model_resources():
-    """Loads the NLLB tokenizer and model (cached)."""
+    """Loads the NLLB tokenizer and model."""
     global _tokenizer, _model
     if _tokenizer is None or _model is None:
         print(f"Loading translation model: {MODEL_NAME}...")
@@ -29,15 +28,18 @@ def translate_to_urdu(text):
         # 2. Prepare inputs
         inputs = tokenizer(text, return_tensors="pt")
 
-        # 3. Generate output with target language forced to Urdu
+        # 3. Get the token ID for Urdu
+        # FIX: Use convert_tokens_to_ids instead of lang_code_to_id
+        target_lang_id = tokenizer.convert_tokens_to_ids("urd_Arab")
+
+        # 4. Generate output
         generated_tokens = model.generate(
             **inputs,
-            forced_bos_token_id=tokenizer.lang_code_to_id["urd_Arab"],
+            forced_bos_token_id=target_lang_id,
             max_length=128,
             num_beams=5
         )
 
-        # 4. Decode result
         return tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
 
     except Exception as exc:
@@ -54,28 +56,19 @@ def translate_to_english(text):
         # 2. Prepare inputs
         inputs = tokenizer(text, return_tensors="pt")
 
-        # 3. Generate output with target language forced to English
+        # 3. Get the token ID for English
+        # FIX: Use convert_tokens_to_ids instead of lang_code_to_id
+        target_lang_id = tokenizer.convert_tokens_to_ids("eng_Latn")
+
+        # 4. Generate output
         generated_tokens = model.generate(
             **inputs,
-            forced_bos_token_id=tokenizer.lang_code_to_id["eng_Latn"],
+            forced_bos_token_id=target_lang_id,
             max_length=128,
             num_beams=5
         )
 
-        # 4. Decode result
         return tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
 
     except Exception as exc:
         raise RuntimeError(f"NLLB Translation to English failed: {str(exc)}")
-
-# --- Test Logic (Runs only if you execute this file directly) ---
-if __name__ == "__main__":
-    print("--- Testing NLLB Model ---")
-    sample_text = "The quick brown fox jumps over the lazy dog."
-    print(f"Original: {sample_text}")
-    
-    urdu_text = translate_to_urdu(sample_text)
-    print(f"Urdu: {urdu_text}")
-    
-    english_text = translate_to_english(urdu_text)
-    print(f"Back to English: {english_text}")
