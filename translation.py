@@ -1,88 +1,81 @@
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import torch
 
-# --- Model Definitions ---
-EN_UR_MODEL_NAME = "Helsinki-NLP/opus-mt-en-ur"
-UR_EN_MODEL_NAME = "Helsinki-NLP/opus-mt-ur-en"
+# --- Model Definition ---
+# Using NLLB-200 Distilled (600M) for high-quality, natural translations.
+# This single model handles both English (eng_Latn) and Urdu (urd_Arab).
+MODEL_NAME = "facebook/nllb-200-distilled-600M"
 
-# Lazy-loading variables
-_en_ur_tokenizer = None
-_en_ur_model = None
-_ur_en_tokenizer = None
-_ur_en_model = None
+_tokenizer = None
+_model = None
 
-# --- Resource Loading Functions ---
-
-def _load_en_ur_resources():
-    """Loads the English-to-Urdu MarianMT model."""
-    global _en_ur_tokenizer, _en_ur_model
-    if _en_ur_tokenizer is None or _en_ur_model is None:
-        _en_ur_tokenizer = AutoTokenizer.from_pretrained(EN_UR_MODEL_NAME)
-        _en_ur_model = AutoModelForSeq2SeqLM.from_pretrained(EN_UR_MODEL_NAME)
-    return _en_ur_tokenizer, _en_ur_model
-
-def _load_ur_en_resources():
-    """Loads the Urdu-to-English MarianMT model."""
-    global _ur_en_tokenizer, _ur_en_model
-    if _ur_en_tokenizer is None or _ur_en_model is None:
-        _ur_en_tokenizer = AutoTokenizer.from_pretrained(UR_EN_MODEL_NAME)
-        _ur_en_model = AutoModelForSeq2SeqLM.from_pretrained(UR_EN_MODEL_NAME)
-    return _ur_en_tokenizer, _ur_en_model
-
-# --- Translation Functions ---
+def _load_model_resources():
+    """Loads the NLLB tokenizer and model (cached)."""
+    global _tokenizer, _model
+    if _tokenizer is None or _model is None:
+        print(f"Loading translation model: {MODEL_NAME}...")
+        _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        _model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
+    return _tokenizer, _model
 
 def translate_to_urdu(text):
     """Translates English text to Urdu."""
-    tokenizer, model = _load_en_ur_resources()
+    tokenizer, model = _load_model_resources()
 
     try:
-        # Tokenize input
-        input_ids = tokenizer.encode(text, return_tensors='pt')
+        # 1. Set the source language to English
+        tokenizer.src_lang = "eng_Latn"
         
-        # Generate translation (No need to force language ID for single-pair models)
+        # 2. Prepare inputs
+        inputs = tokenizer(text, return_tensors="pt")
+
+        # 3. Generate output with target language forced to Urdu
         generated_tokens = model.generate(
-            input_ids,
-            num_beams=5,
-            max_length=128
+            **inputs,
+            forced_bos_token_id=tokenizer.lang_code_to_id["urd_Arab"],
+            max_length=128,
+            num_beams=5
         )
 
-        # Decode output
+        # 4. Decode result
         return tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
 
     except Exception as exc:
-        raise RuntimeError("Translation to Urdu failed (MarianMT Final)") from exc
+        raise RuntimeError(f"NLLB Translation to Urdu failed: {str(exc)}")
 
 def translate_to_english(text):
     """Translates Urdu text to English."""
-    tokenizer, model = _load_ur_en_resources()
+    tokenizer, model = _load_model_resources()
 
     try:
-        # Tokenize input
-        input_ids = tokenizer.encode(text, return_tensors='pt')
+        # 1. Set the source language to Urdu
+        tokenizer.src_lang = "urd_Arab"
+        
+        # 2. Prepare inputs
+        inputs = tokenizer(text, return_tensors="pt")
 
-        # Generate translation
+        # 3. Generate output with target language forced to English
         generated_tokens = model.generate(
-            input_ids,
-            num_beams=5,
-            max_length=128
+            **inputs,
+            forced_bos_token_id=tokenizer.lang_code_to_id["eng_Latn"],
+            max_length=128,
+            num_beams=5
         )
 
+        # 4. Decode result
         return tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
 
     except Exception as exc:
-        raise RuntimeError("Translation to English failed (MarianMT Final)") from exc
+        raise RuntimeError(f"NLLB Translation to English failed: {str(exc)}")
 
-# --- Example Usage ---
+# --- Test Logic (Runs only if you execute this file directly) ---
 if __name__ == "__main__":
-    # Test English to Urdu
-    input_text_en = "This is a final test of the translation API."
-    translated_text_ur = translate_to_urdu(input_text_en)
+    print("--- Testing NLLB Model ---")
+    sample_text = "The quick brown fox jumps over the lazy dog."
+    print(f"Original: {sample_text}")
     
-    print(f"Original (English): {input_text_en}")
-    print(f"Translated (Urdu): {translated_text_ur}")
+    urdu_text = translate_to_urdu(sample_text)
+    print(f"Urdu: {urdu_text}")
     
-    # Test Urdu to English translation
-    input_text_ur = "یہ ایپلیکیشن کامیابی سے چل رہی ہے۔"
-    translated_text_en = translate_to_english(input_text_ur)
-    print(f"\nOriginal (Urdu): {input_text_ur}")
-    print(f"Translated back (English): {translated_text_en}")
+    english_text = translate_to_english(urdu_text)
+    print(f"Back to English: {english_text}")
