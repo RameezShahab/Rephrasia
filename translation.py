@@ -2,15 +2,12 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import torch
 
 # --- Model Definitions ---
-# Using separate, small MarianMT models to guarantee stability and avoid memory crashes.
 EN_UR_MODEL_NAME = "Helsinki-NLP/opus-mt-en-ur"
 UR_EN_MODEL_NAME = "Helsinki-NLP/opus-mt-ur-en"
 
-# Lazy-loading variables for EN-UR model
+# Lazy-loading variables
 _en_ur_tokenizer = None
 _en_ur_model = None
-
-# Lazy-loading variables for UR-EN model
 _ur_en_tokenizer = None
 _ur_en_model = None
 
@@ -39,20 +36,17 @@ def translate_to_urdu(text):
     tokenizer, model = _load_en_ur_resources()
 
     try:
-        # MarianMT requires the target language token to start the generation
-        # We use '>>ur<<' as the start token for this model pair.
-        TGT_LANG_TOKEN = '>>ur<<' 
-        
+        # Tokenize input
         input_ids = tokenizer.encode(text, return_tensors='pt')
         
+        # Generate translation (No need to force language ID for single-pair models)
         generated_tokens = model.generate(
             input_ids,
-            # CRITICAL FIX: Use the specific language token ID for MarianMT
-            decoder_start_token_id=tokenizer.lang_code_to_id[TGT_LANG_TOKEN],
             num_beams=5,
             max_length=128
         )
 
+        # Decode output
         return tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
 
     except Exception as exc:
@@ -63,16 +57,12 @@ def translate_to_english(text):
     tokenizer, model = _load_ur_en_resources()
 
     try:
-        # MarianMT requires the target language token to start the generation
-        # We use '>>en<<' as the start token for this reverse model pair.
-        TGT_LANG_TOKEN = '>>en<<'
-        
+        # Tokenize input
         input_ids = tokenizer.encode(text, return_tensors='pt')
 
+        # Generate translation
         generated_tokens = model.generate(
             input_ids,
-            # CRITICAL FIX: Use the specific language token ID for MarianMT
-            decoder_start_token_id=tokenizer.lang_code_to_id[TGT_LANG_TOKEN],
             num_beams=5,
             max_length=128
         )
