@@ -5,7 +5,6 @@ torch==2.3.0
 sentencepiece>=0.2.0
 protobuf
 sacremoses
-gunicorn
 requests
 pillow
 pytesseract
