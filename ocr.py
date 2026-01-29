@@ -6,40 +6,37 @@ import io
 import os
 from pathlib import Path
 
-
-# Configure Tesseract path for Windows (adjust if needed)
-# For Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
-# Default installation path:
+# --- CONFIGURATION FOR WINDOWS ---
+# Download Tesseract here: https://github.com/UB-Mannheim/tesseract/wiki
 if os.name == 'nt':  # Windows
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
+    # Common default paths
+    possible_paths = [
+        r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+        r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+        r'C:\Users\User\AppData\Local\Tesseract-OCR\tesseract.exe'
+    ]
+    
+    tesseract_found = False
+    for path in possible_paths:
+        if os.path.exists(path):
+            pytesseract.pytesseract.tesseract_cmd = path
+            tesseract_found = True
+            print(f"✅ Tesseract found at: {path}")
+            break
+            
+    if not tesseract_found:
+        print("⚠️ WARNING: Tesseract-OCR not found in default locations.")
+        print("   Please install it or update the path in ocr.py")
 
 def extract_text_from_image(image_data: bytes, language: str = 'eng') -> str:
-    """
-    Extract text from an image using OCR.
-    
-    Args:
-        image_data: Image file bytes
-        language: Language code for OCR
-                 'eng' = English
-                 'urd' = Urdu
-                 'eng+urd' = Both
-    
-    Returns:
-        Extracted text string
-    """
+    """Extract text from an image using OCR."""
     try:
-        # Open image from bytes
         image = Image.open(io.BytesIO(image_data))
         
-        # Convert to RGB if necessary
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        # Perform OCR
         text = pytesseract.image_to_string(image, lang=language)
-        
-        # Clean up extracted text
         text = text.strip()
         
         if not text:
@@ -50,14 +47,7 @@ def extract_text_from_image(image_data: bytes, language: str = 'eng') -> str:
     except Exception as e:
         raise RuntimeError(f"OCR failed: {str(e)}")
 
-
 def get_supported_languages() -> dict:
-    """
-    Get list of supported OCR languages.
-    
-    Returns:
-        Dictionary of language codes and names
-    """
     return {
         'eng': 'English',
         'urd': 'Urdu',
@@ -66,17 +56,7 @@ def get_supported_languages() -> dict:
         'eng+urd': 'English + Urdu (Mixed)',
     }
 
-
 def validate_image(image_data: bytes) -> bool:
-    """
-    Validate if the data is a valid image.
-    
-    Args:
-        image_data: Image file bytes
-    
-    Returns:
-        True if valid image, False otherwise
-    """
     try:
         image = Image.open(io.BytesIO(image_data))
         image.verify()
@@ -84,35 +64,15 @@ def validate_image(image_data: bytes) -> bool:
     except Exception:
         return False
 
-
 def preprocess_image(image_data: bytes) -> bytes:
-    """
-    Preprocess image for better OCR accuracy.
-    Applies grayscale conversion and contrast enhancement.
-    
-    Args:
-        image_data: Original image bytes
-    
-    Returns:
-        Preprocessed image bytes
-    """
     try:
         from PIL import ImageEnhance
-        
         image = Image.open(io.BytesIO(image_data))
-        
-        # Convert to grayscale
         image = image.convert('L')
-        
-        # Enhance contrast
         enhancer = ImageEnhance.Contrast(image)
         image = enhancer.enhance(2.0)
-        
-        # Save to bytes
         output = io.BytesIO()
         image.save(output, format='PNG')
         return output.getvalue()
-    
     except Exception as e:
-        # Return original if preprocessing fails
         return image_data
