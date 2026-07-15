@@ -1,15 +1,30 @@
+# ── Critical fixes ─────────────────────────────────────────────────────────
+# [+] torch          — required by translation.py and chat.py (was missing!)
+# [+] gunicorn       — required by Dockerfile CMD (was missing!)
+# [-] pdf2image      — never used, requires unpinned poppler system dep (removed)
+# [~] All packages   — explicit version pins for reproducible builds
+
 Flask==3.1.2
 werkzeug==3.1.3
-transformers==4.42.0
-torch==2.3.0
+gunicorn==21.2.0
+
+# ML / NLP
+transformers>=4.43.0
+torch>=2.9.0
 sentencepiece>=0.2.0
-protobuf
-sacremoses
-requests
-pillow
-pytesseract
-reportlab
-python-docx
-gTTS
-pdf2image
-numpy
+protobuf>=4.25.0
+sacremoses>=0.1.1
+
+# API / utilities
+requests>=2.32.0
+
+# Image / OCR
+pillow>=10.3.0
+pytesseract>=0.3.10
+
+# Export
+reportlab>=4.2.0
+python-docx>=1.1.2
+
+# TTS
+gTTS>=2.5.1

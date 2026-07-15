@@ -1,5 +1,5 @@
 ---
-title: Rephrasia - AI-Powered Text Processing API
+title: Rephrasia — AI-Powered Text Processing API
 emoji: 🚀
 colorFrom: blue
 colorTo: indigo
@@ -14,8 +14,8 @@ A Flask-based API for text paraphrasing, translation, chat, and more.
 
 ## Features
 
-- **Paraphrasing**: Generate multiple paraphrased versions using PEGASUS
-- **Translation**: Bidirectional English ↔ Urdu translation using NLLB-200
+- **Paraphrasing**: Generate multiple paraphrased versions using `prithivida/parrot_paraphraser_on_T5` (T5-based)
+- **Translation**: Bidirectional English ↔ Urdu translation using `facebook/nllb-200-distilled-600M`
 - **Chat**: Conversational AI with DialoGPT maintaining session history
 - **OCR (Image to Text)**: Extract text from images and process it
 - **Batch Processing**: Process multiple texts in one request
@@ -235,7 +235,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/ocr-rephrase -Form
 
 | Feature | Model | Size |
 |---------|-------|------|
-| Paraphrasing | tuner007/pegasus_paraphrase | ~2GB |
+| Paraphrasing | prithivida/parrot_paraphraser_on_T5 | ~900MB |
 | Translation | facebook/nllb-200-distilled-600M | ~2.5GB |
 | Chat | microsoft/DialoGPT-medium | ~800MB |
 | TTS | Google Text-to-Speech (gTTS) | API-based |
@@ -245,21 +245,22 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/ocr-rephrase -Form
 
 ```
 Rephrasia/
-├── app.py                 # Main Flask application
-├── model.py               # Paraphrasing logic
-├── translation.py         # Translation logic
-├── chat.py                # Chat session management
-├── batch_processor.py     # Bulk processing
-├── tts.py                 # Text-to-speech
-├── export_utils.py        # PDF/DOCX export
-├── ocr.py                 # Image to text (OCR)
-├── requirements.txt       # Dependencies
-├── tests/                 # Test suite
-│   ├── test_api.py
-│   └── test_chat_manager.py
-└── static/                # Generated files
-    ├── audio/             # TTS audio files
-    └── exports/           # PDF/DOCX exports
+├── app.py                 # Main Flask application (routes + input validation)
+├── config.py              # Centralized constants (models, limits, paths)
+├── model.py               # Paraphrasing logic (parrot_paraphraser_on_T5)
+├── translation.py         # Translation logic (NLLB-200 distilled-600M)
+├── chat.py                # Chat session management (DialoGPT + TTL eviction)
+├── batch_processor.py     # Sequential bulk processing
+├── tts.py                 # Text-to-speech (gTTS)
+├── export_utils.py        # PDF/DOCX export (reportlab + python-docx)
+├── ocr.py                 # Image to text (Tesseract OCR)
+├── requirements.txt       # Python dependencies (pinned versions)
+├── Dockerfile             # Docker image definition
+├── templates/
+│   └── index.html         # Single-page frontend (Flask template)
+└── static/                # Generated files (auto-created at runtime)
+    ├── audio/             # TTS audio files (auto-cleaned after 24h)
+    └── exports/           # PDF/DOCX exports (auto-cleaned after 24h)
 ```
 
 ## Performance Tips

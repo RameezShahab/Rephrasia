@@ -1,45 +1,81 @@
-from transformers import PegasusTokenizer, PegasusForConditionalGeneration
+"""
+model.py — Text paraphrasing using prithivida/parrot_paraphraser_on_T5.
 
-# 1. Lazy-load the PEGASUS paraphrasing model so imports stay quick
-model_name = "tuner007/pegasus_paraphrase"
+Model: prithivida/parrot_paraphraser_on_T5
+  - A T5-based paraphrasing model fine-tuned on diverse paraphrase corpora.
+  - Generates up to PARAPHRASE_NUM_SEQUENCES diverse rewordings per input.
+"""
+
+import logging
+from transformers import T5Tokenizer, T5ForConditionalGeneration
+from config import (
+    PARAPHRASE_MODEL,
+    PARAPHRASE_NUM_BEAMS,
+    PARAPHRASE_NUM_SEQUENCES,
+    PARAPHRASE_MAX_LENGTH,
+)
+
+logger = logging.getLogger(__name__)
+
 _tokenizer = None
 _model = None
 
 
 def _load_paraphrase_resources():
+    """Lazy-load the T5 tokenizer and model (only once per process)."""
     global _tokenizer, _model
     if _tokenizer is None or _model is None:
-        _tokenizer = PegasusTokenizer.from_pretrained(model_name)
-        _model = PegasusForConditionalGeneration.from_pretrained(model_name)
+        logger.info("Loading paraphrase model: %s …", PARAPHRASE_MODEL)
+        _tokenizer = T5Tokenizer.from_pretrained(PARAPHRASE_MODEL)
+        _model = T5ForConditionalGeneration.from_pretrained(PARAPHRASE_MODEL, low_cpu_mem_usage=False)
+        logger.info("Paraphrase model loaded successfully.")
     return _tokenizer, _model
 
-def paraphrase(text):
-    # 4. No prefix is needed for this model
+
+def paraphrase(text: str) -> list[str]:
+    """
+    Generate multiple paraphrases of *text*.
+
+    Args:
+        text: Input sentence or paragraph (max ~500 chars recommended).
+
+    Returns:
+        List of paraphrased strings (length == PARAPHRASE_NUM_SEQUENCES).
+
+    Raises:
+        RuntimeError: If model inference fails.
+    """
     tokenizer, model = _load_paraphrase_resources()
 
     try:
-        input_ids = tokenizer.encode(text, return_tensors='pt', truncation=True)
-
-        # 5. Generate multiple (e.g., 3) paraphrases
-        outputs = model.generate(
-            input_ids=input_ids,
-            num_beams=5,
-            num_return_sequences=3,  # Generate 3 different options
-            max_length=128
+        input_ids = tokenizer.encode(
+            f"paraphrase: {text}",
+            return_tensors="pt",
+            truncation=True,
+            max_length=PARAPHRASE_MAX_LENGTH,
         )
 
-        # 6. Decode the list of output sequences
-        return [tokenizer.decode(output, skip_special_tokens=True) for output in outputs]
+        outputs = model.generate(
+            input_ids=input_ids,
+            num_beams=PARAPHRASE_NUM_BEAMS,
+            num_return_sequences=PARAPHRASE_NUM_SEQUENCES,
+            max_length=PARAPHRASE_MAX_LENGTH,
+        )
+
+        results = [tokenizer.decode(o, skip_special_tokens=True) for o in outputs]
+        logger.debug("Generated %d paraphrase(s).", len(results))
+        return results
 
     except Exception as exc:
+        logger.exception("Paraphrasing failed.")
         raise RuntimeError("Paraphrasing failed") from exc
 
-# 7. A better example sentence to test academic paraphrasing
-if __name__ == "__main__":
-    input_text = "The study investigates the correlation between socioeconomic status and academic achievement."
-    paraphrased_sentences = paraphrase(input_text)
 
-    print(f"Original sentence: {input_text}")
-    print("\nParaphrased sentences:")
-    for i, sentence in enumerate(paraphrased_sentences):
-        print(f"{i+1}. {sentence}")
+# ── Quick smoke-test ──────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    sample = "The study investigates the correlation between socioeconomic status and academic achievement."
+    print("Original:", sample)
+    print("\nParaphrases:")
+    for i, s in enumerate(paraphrase(sample), 1):
+        print(f"  {i}. {s}")

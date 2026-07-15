@@ -1,344 +1,405 @@
-from flask import Flask, request, jsonify, send_from_directory, render_template
+"""
+app.py — Main Flask application for Rephrasia AI Text Processing API.
 
-# 1. Import your 'paraphrase' function from model.py
-from model import paraphrase
+Endpoints:
+  GET  /                         → Serve the frontend (templates/index.html)
+  POST /api/rephrase              → Paraphrase text
+  POST /api/translate             → Translate text (EN↔UR)
+  POST /chat                     → Chat with DialoGPT
+  POST /api/batch/rephrase        → Bulk paraphrase
+  POST /api/batch/translate       → Bulk translate
+  GET  /api/batch/status/<job_id> → Batch job status
+  POST /api/tts                  → Text-to-speech
+  POST /api/export/pdf            → Export to PDF
+  POST /api/export/docx           → Export to DOCX
+  POST /api/ocr                  → Image → text
+  GET  /api/ocr/languages         → Supported OCR languages
+  POST /api/ocr-rephrase          → OCR + paraphrase
+  POST /api/ocr-translate         → OCR + translate
+"""
 
-# 2. Import translation helpers and chatbot manager
-from translation import translate_to_urdu, translate_to_english
-from chat import chat_manager
+import logging
+import os
 
-# 3. Import new features
+from flask import Flask, jsonify, render_template, request, send_from_directory
+
 from batch_processor import batch_processor
-from tts import text_to_speech
-from export_utils import export_to_pdf, export_to_docx
-from ocr import extract_text_from_image, validate_image, preprocess_image, get_supported_languages
+from chat import chat_manager
+from config import MAX_TEXT_LENGTH, MAX_BATCH_SIZE, MAX_UPLOAD_MB, PORT, STATIC_CLEANUP_HOURS
+from export_utils import cleanup_old_exports, export_to_docx, export_to_pdf
+from model import paraphrase
+from ocr import extract_text_from_image, get_supported_languages, preprocess_image, validate_image
+from pdf_parser import extract_chunks_from_pdf
+from translation import translate_to_english, translate_to_urdu
+from tts import cleanup_old_audio_files, text_to_speech
 
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# ── App ───────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
-# Configure max upload size (16MB)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+# Global store for last processed outputs (used by chatbot for definition queries)
+last_results: dict = {
+    "rephrase":  [],
+    "translate": "",
+}
 
-# 🚀 --- ROOT ROUTE FIX ---
-@app.route('/', methods=['GET'])
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _require_json_text(data: dict | None) -> tuple[str, None] | tuple[None, tuple]:
+    """
+    Extract and validate 'text' from a JSON body.
+
+    Returns (text, None) on success, or (None, error_response) on failure.
+    """
+    if not data or "text" not in data:
+        return None, (jsonify({"error": "Missing 'text' in request body"}), 400)
+    text = str(data["text"]).strip()
+    if not text:
+        return None, (jsonify({"error": "'text' must not be empty"}), 400)
+    if len(text) > MAX_TEXT_LENGTH:
+        return None, (
+            jsonify({"error": f"'text' exceeds maximum length of {MAX_TEXT_LENGTH} characters"}),
+            413,
+        )
+    return text, None
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.route("/", methods=["GET"])
 def index():
-    """Returns a simple status message for health check or serves the main frontend page."""
-    # If your Hugging Face Space uses a simple API backend, a JSON response is fine.
-    # If it expects a UI, you would uncomment the line below and ensure index.html exists:
-    # return render_template('index.html') 
-    
-    return jsonify({
-        "status": "ok", 
-        "service": "Rephrasia App API is running", 
-        "message": "Access API endpoints via /api/* or /chat."
-    }), 200
-# -------------------------
+    return render_template("index.html")
 
-# --- Core API Endpoints ---
 
-@app.route('/api/rephrase', methods=['POST'])
+# ── Core API ──────────────────────────────────────────────────────────────────
+
+@app.route("/api/rephrase", methods=["POST"])
 def rephrase():
-    data = request.json
-    if 'text' not in data:
-        return jsonify({"error": "Missing 'text' in request body"}), 400
-    
-    input_text = data['text']
+    text, err = _require_json_text(request.json)
+    if err:
+        return err
+
     try:
-        rephrased_sentences = paraphrase(input_text)
+        rephrased_sentences = paraphrase(text)
+        last_results["rephrase"] = rephrased_sentences
     except Exception as exc:
+        logger.exception("Paraphrasing endpoint failed.")
         return jsonify({"error": "Paraphrasing failed", "details": str(exc)}), 500
 
     return jsonify({"rephrased_results": rephrased_sentences})
 
-@app.route('/api/translate', methods=['POST'])
+
+@app.route("/api/translate", methods=["POST"])
 def translate():
-    data = request.json
-    if not data or 'text' not in data:
-        return jsonify({"error": "Missing 'text' in request body"}), 400
-    
-    input_text = data['text']
-    language = data.get('language', 'urdu')  # Default to Urdu translation
+    text, err = _require_json_text(request.json)
+    if err:
+        return err
+
+    language = (request.json.get("language") or "urdu").lower()
 
     try:
-        # Call the appropriate translation function based on target language
-        if language.lower() == 'urdu':
-            translated_text = translate_to_urdu(input_text)
-        elif language.lower() == 'english':
-            translated_text = translate_to_english(input_text)
+        if language == "urdu":
+            translated_text = translate_to_urdu(text)
+        elif language == "english":
+            translated_text = translate_to_english(text)
         else:
             return jsonify({"error": "Unsupported language. Use 'urdu' or 'english'"}), 400
     except Exception as exc:
+        logger.exception("Translation endpoint failed.")
         return jsonify({"error": "Translation failed", "details": str(exc)}), 500
 
-    # Return the real result
+    last_results["translate"] = translated_text
     return jsonify({"translated_text": translated_text})
 
-@app.route('/chat', methods=['POST'])
+
+@app.route("/chat", methods=["POST"])
 def chat_endpoint():
     data = request.json or {}
-    message = data.get('text')
-    session_id = data.get('session_id')
+    message = str(data.get("text", "")).strip()
+    session_id = data.get("session_id")
 
     if not message:
         return jsonify({"error": "Missing 'text' in request body"}), 400
+    if len(message) > MAX_TEXT_LENGTH:
+        return jsonify({"error": f"Message exceeds {MAX_TEXT_LENGTH} characters"}), 413
 
     try:
+        chat_manager.update_context(last_results)
         reply, session_id, history = chat_manager.handle_message(session_id, message)
     except Exception as exc:
+        logger.exception("Chat endpoint failed.")
         return jsonify({"error": "Chat generation failed", "details": str(exc)}), 500
 
-    return jsonify({
-        "session_id": session_id,
-        "reply": reply,
-        "history": history
-    })
+    return jsonify({"session_id": session_id, "reply": reply, "history": history})
 
-# --- Batch Processing Endpoints ---
 
-@app.route('/api/batch/rephrase', methods=['POST'])
+# ── Batch ─────────────────────────────────────────────────────────────────────
+
+@app.route("/api/batch/rephrase", methods=["POST"])
 def batch_rephrase():
     data = request.json or {}
-    texts = data.get('texts', [])
-    
+    texts = data.get("texts", [])
     if not texts or not isinstance(texts, list):
         return jsonify({"error": "Missing 'texts' array in request body"}), 400
-    
-    # Create batch job
-    job_id = batch_processor.create_job("rephrase", texts)
-    
-    # Process synchronously for now
-    batch_processor.process_job(job_id, paraphrase)
-    
-    job = batch_processor.get_job(job_id)
-    return jsonify(job.to_dict())
+    if len(texts) > MAX_BATCH_SIZE:
+        return jsonify({"error": f"Batch exceeds maximum of {MAX_BATCH_SIZE} items"}), 413
 
-@app.route('/api/batch/translate', methods=['POST'])
+    try:
+        job_id = batch_processor.create_job("rephrase", texts)
+        batch_processor.process_job(job_id, paraphrase)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Batch rephrase failed.")
+        return jsonify({"error": "Batch rephrase failed", "details": str(exc)}), 500
+
+    return jsonify(batch_processor.get_job(job_id).to_dict())
+
+
+@app.route("/api/batch/translate", methods=["POST"])
 def batch_translate():
     data = request.json or {}
-    texts = data.get('texts', [])
-    language = data.get('language', 'urdu')
-    
+    texts = data.get("texts", [])
+    language = (data.get("language") or "urdu").lower()
+
     if not texts or not isinstance(texts, list):
         return jsonify({"error": "Missing 'texts' array in request body"}), 400
-    
-    # Select translation function
-    if language.lower() == 'urdu':
+    if len(texts) > MAX_BATCH_SIZE:
+        return jsonify({"error": f"Batch exceeds maximum of {MAX_BATCH_SIZE} items"}), 413
+
+    if language == "urdu":
         translate_func = translate_to_urdu
-    elif language.lower() == 'english':
+    elif language == "english":
         translate_func = translate_to_english
     else:
         return jsonify({"error": "Unsupported language. Use 'urdu' or 'english'"}), 400
-    
-    # Create and process batch job
-    job_id = batch_processor.create_job("translate", texts, {"language": language})
-    batch_processor.process_job(job_id, translate_func)
-    
-    job = batch_processor.get_job(job_id)
-    return jsonify(job.to_dict())
 
-@app.route('/api/batch/status/<job_id>', methods=['GET'])
+    try:
+        job_id = batch_processor.create_job("translate", texts, {"language": language})
+        batch_processor.process_job(job_id, translate_func)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Batch translate failed.")
+        return jsonify({"error": "Batch translate failed", "details": str(exc)}), 500
+
+    return jsonify(batch_processor.get_job(job_id).to_dict())
+
+
+@app.route("/api/batch/status/<job_id>", methods=["GET"])
 def batch_status(job_id):
     job = batch_processor.get_job(job_id)
     if not job:
         return jsonify({"error": "Job not found"}), 404
-    
     return jsonify(job.to_dict())
 
-# --- Text-to-Speech Endpoints ---
 
-@app.route('/api/tts', methods=['POST'])
+# ── TTS ───────────────────────────────────────────────────────────────────────
+
+@app.route("/api/tts", methods=["POST"])
 def tts_endpoint():
     data = request.json or {}
-    text = data.get('text')
-    language = data.get('language', 'ur')  # Default to Urdu
-    
+    text = str(data.get("text", "")).strip()
+    language = str(data.get("language", "ur")).lower()
+
     if not text:
         return jsonify({"error": "Missing 'text' in request body"}), 400
-    
-    # Map language names to codes
-    lang_map = {
-        'urdu': 'ur',
-        'english': 'en',
-        'ur': 'ur',
-        'en': 'en'
-    }
-    
-    lang_code = lang_map.get(language.lower(), 'ur')
-    
+
+    lang_map = {"urdu": "ur", "english": "en", "ur": "ur", "en": "en"}
+    lang_code = lang_map.get(language, "ur")
+
     try:
         audio_path = text_to_speech(text, lang_code)
-        return jsonify({
-            "audio_url": f"/static/{audio_path}",
-            "text": text,
-            "language": lang_code
-        })
+        return jsonify({"audio_url": f"/static/{audio_path}", "text": text, "language": lang_code})
     except Exception as exc:
+        logger.exception("TTS endpoint failed.")
         return jsonify({"error": "TTS generation failed", "details": str(exc)}), 500
 
-# --- Export Endpoints ---
 
-@app.route('/api/export/pdf', methods=['POST'])
+# ── Export ────────────────────────────────────────────────────────────────────
+
+@app.route("/api/export/pdf", methods=["POST"])
 def export_pdf():
     data = request.json or {}
-    original_text = data.get('original_text', '')
-    results = data.get('results', [])
-    result_type = data.get('result_type', 'Paraphrased')
-    
+    original_text = str(data.get("original_text", "")).strip()
+    results = data.get("results", [])
+    result_type = data.get("result_type", "Paraphrased")
+
     if not original_text or not results:
         return jsonify({"error": "Missing 'original_text' or 'results' in request body"}), 400
-    
+
     try:
         pdf_path = export_to_pdf(original_text, results, result_type)
-        return jsonify({
-            "download_url": f"/static/{pdf_path}",
-            "format": "pdf"
-        })
+        return jsonify({"download_url": f"/static/{pdf_path}", "format": "pdf"})
     except Exception as exc:
+        logger.exception("PDF export endpoint failed.")
         return jsonify({"error": "PDF export failed", "details": str(exc)}), 500
 
-@app.route('/api/export/docx', methods=['POST'])
+
+@app.route("/api/export/docx", methods=["POST"])
 def export_docx():
     data = request.json or {}
-    original_text = data.get('original_text', '')
-    results = data.get('results', [])
-    result_type = data.get('result_type', 'Paraphrased')
-    
+    original_text = str(data.get("original_text", "")).strip()
+    results = data.get("results", [])
+    result_type = data.get("result_type", "Paraphrased")
+
     if not original_text or not results:
         return jsonify({"error": "Missing 'original_text' or 'results' in request body"}), 400
-    
+
     try:
         docx_path = export_to_docx(original_text, results, result_type)
-        return jsonify({
-            "download_url": f"/static/{docx_path}",
-            "format": "docx"
-        })
+        return jsonify({"download_url": f"/static/{docx_path}", "format": "docx"})
     except Exception as exc:
+        logger.exception("DOCX export endpoint failed.")
         return jsonify({"error": "DOCX export failed", "details": str(exc)}), 500
 
-# --- Static File Serving ---
 
-@app.route('/static/<path:path>')
+# ── Static ────────────────────────────────────────────────────────────────────
+
+@app.route("/static/<path:path>")
 def serve_static(path):
-    return send_from_directory('static', path)
+    return send_from_directory("static", path)
 
-# --- OCR (Image to Text) Endpoints ---
 
-@app.route('/api/ocr', methods=['POST'])
+# ── OCR ───────────────────────────────────────────────────────────────────────
+
+def _read_ocr_image() -> tuple[bytes | None, tuple | None]:
+    """
+    Read and validate the uploaded image from the current request.
+    Returns (image_data, None) on success, or (None, error_response) on failure.
+    """
+    if "image" not in request.files:
+        return None, (jsonify({"error": "No image file provided"}), 400)
+    file = request.files["image"]
+    if not file.filename:
+        return None, (jsonify({"error": "Empty filename"}), 400)
+
+    image_data = file.read()
+    if not validate_image(image_data):
+        return None, (jsonify({"error": "Invalid or corrupted image file"}), 400)
+
+    if request.form.get("preprocess", "false").lower() == "true":
+        image_data = preprocess_image(image_data)
+
+    return image_data, None
+
+
+@app.route("/api/ocr", methods=["POST"])
 def ocr_endpoint():
-    """Extract text from uploaded image."""
-    if 'image' not in request.files:
-        return jsonify({"error": "No image file provided"}), 400
-    
-    file = request.files['image']
-    if file.filename == '':
-        return jsonify({"error": "Empty filename"}), 400
-    
-    # Get optional language parameter
-    language = request.form.get('language', 'eng')
-    preprocess = request.form.get('preprocess', 'false').lower() == 'true'
-    
+    image_data, err = _read_ocr_image()
+    if err:
+        return err
+
+    language = request.form.get("language", "eng")
     try:
-        # Read image data
-        image_data = file.read()
-        
-        # Validate image
-        if not validate_image(image_data):
-            return jsonify({"error": "Invalid image file"}), 400
-        
-        # Preprocess if requested
-        if preprocess:
-            image_data = preprocess_image(image_data)
-        
-        # Extract text
         extracted_text = extract_text_from_image(image_data, language)
-        
         return jsonify({
             "extracted_text": extracted_text,
             "language": language,
-            "preprocessed": preprocess
+            "preprocessed": request.form.get("preprocess", "false").lower() == "true",
         })
-    
     except Exception as exc:
+        logger.exception("OCR endpoint failed.")
         return jsonify({"error": "OCR failed", "details": str(exc)}), 500
 
-@app.route('/api/ocr/languages', methods=['GET'])
+
+@app.route("/api/ocr/languages", methods=["GET"])
 def ocr_languages():
-    """Get supported OCR languages."""
     return jsonify(get_supported_languages())
 
-@app.route('/api/ocr-rephrase', methods=['POST'])
+
+@app.route("/api/ocr-rephrase", methods=["POST"])
 def ocr_rephrase():
-    """Extract text from image and rephrase it."""
-    if 'image' not in request.files:
-        return jsonify({"error": "No image file provided"}), 400
-    
-    file = request.files['image']
-    language = request.form.get('language', 'eng')
-    preprocess = request.form.get('preprocess', 'false').lower() == 'true'
-    
+    image_data, err = _read_ocr_image()
+    if err:
+        return err
+
+    language = request.form.get("language", "eng")
     try:
-        # Extract text from image
-        image_data = file.read()
-        
-        if not validate_image(image_data):
-            return jsonify({"error": "Invalid image file"}), 400
-        
-        if preprocess:
-            image_data = preprocess_image(image_data)
-        
         extracted_text = extract_text_from_image(image_data, language)
-        
-        # Rephrase the extracted text
         rephrased_results = paraphrase(extracted_text)
-        
         return jsonify({
             "original_text": extracted_text,
             "rephrased_results": rephrased_results,
-            "ocr_language": language
+            "ocr_language": language,
         })
-    
     except Exception as exc:
+        logger.exception("OCR-Rephrase endpoint failed.")
         return jsonify({"error": "OCR-Rephrase failed", "details": str(exc)}), 500
 
-@app.route('/api/ocr-translate', methods=['POST'])
+
+@app.route("/api/ocr-translate", methods=["POST"])
 def ocr_translate():
-    """Extract text from image and translate it."""
-    if 'image' not in request.files:
-        return jsonify({"error": "No image file provided"}), 400
-    
-    file = request.files['image']
-    ocr_language = request.form.get('ocr_language', 'eng')
-    target_language = request.form.get('target_language', 'urdu')
-    preprocess = request.form.get('preprocess', 'false').lower() == 'true'
-    
+    image_data, err = _read_ocr_image()
+    if err:
+        return err
+
+    ocr_language    = request.form.get("ocr_language", "eng")
+    target_language = request.form.get("target_language", "urdu").lower()
+
     try:
-        # Extract text from image
-        image_data = file.read()
-        
-        if not validate_image(image_data):
-            return jsonify({"error": "Invalid image file"}), 400
-        
-        if preprocess:
-            image_data = preprocess_image(image_data)
-        
         extracted_text = extract_text_from_image(image_data, ocr_language)
-        
-        # Translate the extracted text
-        if target_language.lower() == 'urdu':
+
+        if target_language == "urdu":
             translated_text = translate_to_urdu(extracted_text)
-        elif target_language.lower() == 'english':
+        elif target_language == "english":
             translated_text = translate_to_english(extracted_text)
         else:
-            return jsonify({"error": "Unsupported target language"}), 400
-        
+            return jsonify({"error": "Unsupported target language. Use 'urdu' or 'english'"}), 400
+
         return jsonify({
-            "original_text": extracted_text,
+            "original_text":   extracted_text,
             "translated_text": translated_text,
-            "ocr_language": ocr_language,
-            "target_language": target_language
+            "ocr_language":    ocr_language,
+            "target_language": target_language,
         })
-    
     except Exception as exc:
+        logger.exception("OCR-Translate endpoint failed.")
         return jsonify({"error": "OCR-Translate failed", "details": str(exc)}), 500
 
-if __name__ == '__main__':
-    app.run(debug=True)
+
+# ── PDF ───────────────────────────────────────────────────────────────────────
+
+@app.route("/api/pdf/extract", methods=["POST"])
+def pdf_extract():
+    if "pdf" not in request.files:
+        return jsonify({"error": "No pdf file provided"}), 400
+    file = request.files["pdf"]
+    if not file.filename.lower().endswith(".pdf"):
+        return jsonify({"error": "File must be a PDF"}), 400
+
+    pdf_bytes = file.read()
+    try:
+        chunks = extract_chunks_from_pdf(pdf_bytes)
+        return jsonify({"chunks": chunks, "total_chunks": len(chunks)})
+    except Exception as exc:
+        logger.exception("PDF extraction failed.")
+        return jsonify({"error": "PDF extraction failed", "details": str(exc)}), 500
+
+
+# ── Startup cleanup ───────────────────────────────────────────────────────────
+
+def _run_startup_cleanup() -> None:
+    """Delete old static files left from previous runs."""
+    deleted_audio   = cleanup_old_audio_files(STATIC_CLEANUP_HOURS)
+    deleted_exports = cleanup_old_exports(STATIC_CLEANUP_HOURS)
+    logger.info(
+        "Startup cleanup: removed %d audio file(s), %d export file(s).",
+        deleted_audio, deleted_exports,
+    )
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    _run_startup_cleanup()
+    debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
+    app.run(debug=debug_mode, port=PORT)

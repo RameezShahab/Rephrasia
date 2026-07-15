@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Hugging Face cache
+hf_cache/
+
+# Local server logs
+server_log.txt
+server_err.txt
+server_out.txt
+
+# Tesseract OCR engine files (if any exist locally)
+tessdata/
+*.traineddata
