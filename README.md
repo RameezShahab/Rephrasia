@@ -14,9 +14,9 @@ A Flask-based API for text paraphrasing, translation, chat, and more.
 
 ## Features
 
-- **Paraphrasing**: Generate multiple paraphrased versions using `prithivida/parrot_paraphraser_on_T5` (T5-based)
+- **Paraphrasing**: Generate multiple paraphrased versions using `humarin/chatgpt_paraphraser_on_T5_base`
 - **Translation**: Bidirectional English ↔ Urdu translation using `facebook/nllb-200-distilled-600M`
-- **Chat**: Conversational AI with DialoGPT maintaining session history
+- **Chat**: Global AI Copilot powered by the blazing-fast Groq API (`llama-3.1-8b-instant`)
 - **OCR (Image to Text)**: Extract text from images and process it
 - **Batch Processing**: Process multiple texts in one request
 - **Text-to-Speech**: Convert text to audio (Urdu/English)
@@ -99,7 +99,7 @@ Content-Type: application/json
 }
 ```
 
-### 3. Chat
+### 3. Chat (Groq Copilot)
 
 ```bash
 POST /chat
@@ -235,9 +235,9 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/ocr-rephrase -Form
 
 | Feature | Model | Size |
 |---------|-------|------|
-| Paraphrasing | prithivida/parrot_paraphraser_on_T5 | ~900MB |
+| Paraphrasing | humarin/chatgpt_paraphraser_on_T5_base | ~900MB |
 | Translation | facebook/nllb-200-distilled-600M | ~2.5GB |
-| Chat | microsoft/DialoGPT-medium | ~800MB |
+| Chat | Groq API (llama-3.1-8b-instant) | API-based |
 | TTS | Google Text-to-Speech (gTTS) | API-based |
 | OCR | Tesseract OCR | ~100MB (separate install) |
 
@@ -247,17 +247,18 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/ocr-rephrase -Form
 Rephrasia/
 ├── app.py                 # Main Flask application (routes + input validation)
 ├── config.py              # Centralized constants (models, limits, paths)
-├── model.py               # Paraphrasing logic (parrot_paraphraser_on_T5)
+├── model.py               # Paraphrasing logic (chatgpt_paraphraser_on_T5)
 ├── translation.py         # Translation logic (NLLB-200 distilled-600M)
-├── chat.py                # Chat session management (DialoGPT + TTL eviction)
+├── chat.py                # Chat session management (Groq API integration)
 ├── batch_processor.py     # Sequential bulk processing
 ├── tts.py                 # Text-to-speech (gTTS)
 ├── export_utils.py        # PDF/DOCX export (reportlab + python-docx)
 ├── ocr.py                 # Image to text (Tesseract OCR)
 ├── requirements.txt       # Python dependencies (pinned versions)
 ├── Dockerfile             # Docker image definition
-├── templates/
-│   └── index.html         # Single-page frontend (Flask template)
+├── frontend/              # Modern React frontend (Vite + TailwindCSS)
+│   ├── src/pages/         # React pages (Dashboard, OCR, Chat, etc.)
+│   └── src/components/    # Reusable React components (CopilotSidebar, etc.)
 └── static/                # Generated files (auto-created at runtime)
     ├── audio/             # TTS audio files (auto-cleaned after 24h)
     └── exports/           # PDF/DOCX exports (auto-cleaned after 24h)
