@@ -13,3 +13,4 @@ server_out.txt
 # Tesseract OCR engine files (if any exist locally)
 tessdata/
 *.traineddata
+
