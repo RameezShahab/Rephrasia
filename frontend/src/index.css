@@ -1,0 +1,61 @@
+@import "tailwindcss";
+body {
+  font-family: 'Inter', sans-serif;
+}
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+}
+
+.urdu-text {
+  font-family: 'Noto Nastaliq Urdu', serif;
+  font-size: 1.3em;
+  line-height: 2.4;
+  direction: rtl;
+  text-align: right;
+}
+
+
+@keyframes float1 {
+  0%, 100% {
+    transform: translateY(0px) translateX(0px);
+  }
+
+  50% {
+    transform: translateY(-20px) translateX(10px);
+  }
+}
+
+@keyframes float2 {
+  0%, 100% {
+    transform: translateY(0px) translateX(0px);
+  }
+
+  50% {
+    transform: translateY(20px) translateX(-10px);
+  }
+}
+
+@keyframes float3 {
+  0%, 100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.1);
+  }
+}
+.animate-float1 {
+  animation: float1 8s ease-in-out infinite;
+}
+
+.animate-float2 {
+  animation: float2 10s ease-in-out infinite;
+}
+
+.animate-float3 {
+  animation: float3 12s ease-in-out infinite;
+}

@@ -1,0 +1,55 @@
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+variables:
+  PYTHON_VERSION: "3.10"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+  paths:
+    - .cache/pip
+
+# 1. Linting & Formatting
+flake8_lint:
+  stage: lint
+  image: python:${PYTHON_VERSION}
+  script:
+    - pip install flake8 black mypy
+    - black --check .
+    - flake8 . --max-line-length=120
+    - mypy . --ignore-missing-imports
+
+# 2. Automated Testing
+pytest_suite:
+  stage: test
+  image: python:${PYTHON_VERSION}
+  script:
+    - pip install -r requirements.txt
+    - pip install pytest pytest-cov
+    - pytest --cov=. --cov-report=term-missing tests/
+
+# 3. Docker Image Build (Only on main branch)
+build_docker:
+  stage: build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -t $CI_REGISTRY_IMAGE:latest .
+    - docker push $CI_REGISTRY_IMAGE:latest
+
+# 4. Mock Deployment Check
+deploy_check:
+  stage: deploy
+  image: alpine:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - echo "Validating infrastructure configurations..."
+    - echo "Simulating deployment to staging environment..."
